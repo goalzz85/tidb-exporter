@@ -9,30 +9,26 @@ use super::WriteWrap;
 pub struct CsvWriter<'a> {
     table_info : &'a TableInfo,
     export_path : String,
+    file_size : usize,
+    is_gzip : bool,
     csv_writer : Writer<WriteWrap>,
+    cur_file_num : i32,
 }
 
 impl CsvWriter<'_> {
     pub fn new<'a>(table_info : &'a TableInfo, export_path : &str, file_size : usize, is_gzip : bool) -> CsvWriter<'a> {
-
-        let write_wrap = WriteWrap::new(export_path, file_size, is_gzip);
-        let mut csv_writer = csv::WriterBuilder::new()
-            .double_quote(false)
-            .quote_style(csv::QuoteStyle::Never)
-            .from_writer(write_wrap);
-    
-        //write title
-        let mut title_record = csv::StringRecord::new();
-        for col in &table_info.cols {
-            title_record.push_field(&col.name.L);
+        let mut cur_file_num = 0;
+        if file_size > 0 {
+            cur_file_num = 1;
         }
-        
-        csv_writer.write_record(&title_record).unwrap();
-
+        let csv_writer = Self::get_inner_csv_writer(table_info, export_path, file_size, cur_file_num, is_gzip);
         return CsvWriter {
             table_info : table_info,
             export_path : export_path.to_owned(),
+            file_size : file_size,
+            is_gzip : is_gzip,
             csv_writer : csv_writer,
+            cur_file_num : cur_file_num,
         };
     }
 
@@ -50,6 +46,25 @@ impl CsvWriter<'_> {
             _ => false
         }
     }
+
+    fn get_inner_csv_writer(table_info : &TableInfo, export_path : &str, file_size : usize, file_num : i32, is_gzip : bool) -> csv::Writer<WriteWrap> {
+        let write_wrap = WriteWrap::new(export_path, file_size, file_num, is_gzip);
+
+        let mut csv_writer = csv::WriterBuilder::new()
+            .double_quote(false)
+            .quote_style(csv::QuoteStyle::Never)
+            .from_writer(write_wrap);
+    
+        //write title
+        let mut title_record = csv::StringRecord::new();
+        for col in &table_info.cols {
+            title_record.push_field(&col.name.L);
+        }
+        
+        csv_writer.write_record(&title_record).unwrap();
+
+        return csv_writer;
+    }
 }
 
 impl TiDBExportWriter for CsvWriter<'_> {
@@ -59,6 +74,7 @@ impl TiDBExportWriter for CsvWriter<'_> {
             //print!("{}", datums_res.err().unwrap());
             return Err(Error::CorruptedData("row data to datum_refs error".to_owned()));
         }
+
         let datum_refs = datums_res.unwrap();
 
         let mut data_record = csv::StringRecord::with_capacity(1024, datum_refs.len());
@@ -109,6 +125,15 @@ impl TiDBExportWriter for CsvWriter<'_> {
             return Err(Error::Other(res.err().unwrap().to_string()));
         }
 
+        return Ok(());
+    }
+
+    fn check_split_file(&mut self) -> Result<(), Error> {
+        if !self.csv_writer.get_ref().is_need_split() {
+            return Ok(());
+        }
+        self.cur_file_num += 1;
+        self.csv_writer = Self::get_inner_csv_writer(self.table_info, &self.export_path, self.file_size, self.cur_file_num, self.is_gzip);
         return Ok(());
     }
 

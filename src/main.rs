@@ -6,7 +6,7 @@ mod tabledataiterator;
 mod datum;
 mod writer;
 
-use clap::Parser;
+use clap::{Parser, builder::ArgPredicate};
 
 use crate::{storagenode::RocksDbStorageNode, writer::{TiDBExportWriter, csvwriter::CsvWriter}, tidbtypes::TableInfo};
 
@@ -22,11 +22,11 @@ struct Cli {
     database : Option<String>,
 
     ///table name that need to be exported, must be in the database specified by --database
-    #[arg(short, long)]
+    #[arg(short, long, requires_if(ArgPredicate::IsPresent, "writer"))]
     table : Option<String>,
 
     ///the writer that the data will be written to. only support 'csv' for now.
-    #[arg(short, long, required_unless_present_all(["database", "table"]), value_names(["csv"]))]
+    #[arg(short, long, value_names(["csv"]))]
     writer : Option<String>,
 
     #[arg(short, long, required_if_eq("writer", "csv"))]
@@ -36,8 +36,8 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     gzip : bool,
 
-    ///maximum size of each exported file is measured in MiB. file will be sperated into multiple files with file size smaller than the file_size you have set.
-    #[arg(short, long, default_value_t = 0)]
+    ///maximum size of each exported file is measured in MB. file will be sperated into multiple files with file size smaller than the file_size you have set.
+    #[arg(short = 's', long, default_value_t = 0)]
     file_size : usize,
 }
 
@@ -102,7 +102,8 @@ fn main() {
 
     let mut export_writer : Box<dyn TiDBExportWriter>;
     if cli.writer.unwrap().eq("csv") {
-        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), cli.file_size, cli.gzip));
+        let file_size = cli.file_size * 1024 * 1024;
+        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_size, cli.gzip));
     } else {
         print!("not supoort writer!");
         return;
@@ -111,7 +112,6 @@ fn main() {
     for table_info in table_infos {
         export_data(&rocksdb_node, table_info, export_writer.as_mut());
     }
-    print!("Hello World!");
 }
 
 
@@ -139,9 +139,18 @@ fn export_data(rocksdb_node : &RocksDbStorageNode, table_info : &TableInfo, expo
         }
     };
 
+    let mut records_num = 0;
     for row_data in data_iterator {
         match export_writer.write_row_data(row_data) {
-            Ok(_) => continue,
+            Ok(_) => {
+                records_num += 1;
+                if records_num % 100 == 0 {
+                    match export_writer.check_split_file() {
+                        Ok(()) => continue,
+                        Err(e) => print!("{:?}\n", e)
+                    }
+                }
+            },
             Err(e) => {
                 print!("{:?}\n", e);
             }

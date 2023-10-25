@@ -50,7 +50,7 @@ impl RocksDbStorageNode {
         readopts.set_iterate_lower_bound(lower_bound);
         readopts.set_iterate_upper_bound(upper_bound);
 
-        let cf = match self.db.cf_handle("default") {
+        let cf = match self.db.cf_handle(cf_name) {
             Some(cf) => cf,
             None => return Err(Error::StorageNodeError(format!("cf {} not exists.", cf_name))),
         };
