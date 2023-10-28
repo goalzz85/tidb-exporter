@@ -21,7 +21,10 @@ impl CsvWriter<'_> {
         if file_size > 0 {
             cur_file_num = 1;
         }
-        let csv_writer = Self::get_inner_csv_writer(table_info, export_path, file_size, cur_file_num, is_gzip);
+        let csv_writer = match Self::get_inner_csv_writer(table_info, export_path, file_size, cur_file_num, is_gzip) {
+            Ok(w) => w,
+            Err(e) => panic!("{:?}", e),
+        };
         return CsvWriter {
             table_info : table_info,
             export_path : export_path.to_owned(),
@@ -47,8 +50,8 @@ impl CsvWriter<'_> {
         }
     }
 
-    fn get_inner_csv_writer(table_info : &TableInfo, export_path : &str, file_size : usize, file_num : i32, is_gzip : bool) -> csv::Writer<WriteWrap> {
-        let write_wrap = WriteWrap::new(export_path, file_size, file_num, is_gzip);
+    fn get_inner_csv_writer(table_info : &TableInfo, export_path : &str, file_size : usize, file_num : i32, is_gzip : bool) -> Result<csv::Writer<WriteWrap>, Error> {
+        let write_wrap = WriteWrap::new(export_path, file_size, file_num, is_gzip)?;
 
         let mut csv_writer = csv::WriterBuilder::new()
             .double_quote(false)
@@ -63,7 +66,7 @@ impl CsvWriter<'_> {
         
         csv_writer.write_record(&title_record).unwrap();
 
-        return csv_writer;
+        return Ok(csv_writer);
     }
 }
 
@@ -133,7 +136,7 @@ impl TiDBExportWriter for CsvWriter<'_> {
             return Ok(());
         }
         self.cur_file_num += 1;
-        self.csv_writer = Self::get_inner_csv_writer(self.table_info, &self.export_path, self.file_size, self.cur_file_num, self.is_gzip);
+        self.csv_writer = Self::get_inner_csv_writer(self.table_info, &self.export_path, self.file_size, self.cur_file_num, self.is_gzip)?;
         return Ok(());
     }
 
