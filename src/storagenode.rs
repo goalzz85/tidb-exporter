@@ -12,6 +12,8 @@ impl RocksDbStorageNode {
         let db_path_buf = PathBuf::from(db_path); 
         let mut opts = Options::default();
         opts.set_advise_random_on_open(false);
+        opts.set_skip_checking_sst_file_sizes_on_db_open(true);
+        opts.set_skip_stats_update_on_db_open(true);
 
         let mut bopts = BlockBasedOptions::default();
         bopts.disable_cache();
