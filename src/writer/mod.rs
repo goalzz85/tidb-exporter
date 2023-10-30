@@ -47,7 +47,9 @@ impl WriteWrap {
 
         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
             new_file_name = stem.to_owned();
-            new_file_name.push_str(&format!(".{:09}", file_num));
+            if file_num > 0 {
+                new_file_name.push_str(&format!(".{:09}", file_num));
+            }
 
             if let Some(extension) = path.extension().and_then(|s| s.to_str()) {
                 new_file_name.push('.');

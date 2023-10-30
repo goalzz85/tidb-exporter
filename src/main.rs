@@ -36,9 +36,9 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     gzip : bool,
 
-    ///maximum size of each exported file is measured in MB. file will be sperated into multiple files with file size smaller than the file_size you have set.
+    ///maximum size of data written to a single file is measured in MB. file will be splitted into multiple files with file size smaller than the file-data-size you have set.
     #[arg(short = 's', long, default_value_t = 0)]
-    file_size : usize,
+    file_data_size : usize,
 }
 
 fn main() {
@@ -102,8 +102,8 @@ fn main() {
 
     let mut export_writer : Box<dyn TiDBExportWriter>;
     if cli.writer.unwrap().eq("csv") {
-        let file_size = cli.file_size * 1024 * 1024;
-        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_size, cli.gzip));
+        let file_data_size = cli.file_data_size * 1024 * 1024;
+        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_data_size, cli.gzip));
     } else {
         print!("not supoort writer!");
         return;
