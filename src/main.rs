@@ -36,9 +36,9 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     gzip : bool,
 
-    ///maximum size of data written to a single file is measured in MB. file will be splitted into multiple files with file size smaller than the file-data-size you have set.
+    ///maximum size of a single file, and is measured in MB. file will be splitted into multiple files.
     #[arg(short = 's', long, default_value_t = 0)]
-    file_data_size : usize,
+    file_size : usize,
 }
 
 fn main() {
@@ -102,8 +102,8 @@ fn main() {
 
     let mut export_writer : Box<dyn TiDBExportWriter>;
     if cli.writer.unwrap().eq("csv") {
-        let file_data_size = cli.file_data_size * 1024 * 1024;
-        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_data_size, cli.gzip));
+        let file_size = cli.file_size * 1024 * 1024;
+        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_size, cli.gzip));
     } else {
         print!("not supoort writer!");
         return;
@@ -139,18 +139,10 @@ fn export_data(rocksdb_node : &RocksDbStorageNode, table_info : &TableInfo, expo
         }
     };
 
-    let mut records_num = 0;
+
     for row_data in data_iterator {
         match export_writer.write_row_data(row_data) {
-            Ok(_) => {
-                records_num += 1;
-                if records_num % 100 == 0 {
-                    match export_writer.check_split_file() {
-                        Ok(()) => continue,
-                        Err(e) => print!("{:?}\n", e)
-                    }
-                }
-            },
+            Ok(_) => continue,
             Err(e) => {
                 print!("{:?}\n", e);
             }

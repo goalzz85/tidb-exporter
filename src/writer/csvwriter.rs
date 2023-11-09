@@ -3,35 +3,25 @@ use tidb_query_datatype::FieldTypeTp;
 
 use crate::{writer::TiDBExportWriter, datum::{RowData, DatumRef}, errors::Error, tidbtypes::TableInfo};
 
-use super::WriteWrap;
+use super::FileWriteWrap;
 
 #[allow(unused_variables, dead_code)]
 pub struct CsvWriter<'a> {
     table_info : &'a TableInfo,
-    export_path : String,
-    file_size : usize,
-    is_gzip : bool,
-    csv_writer : Writer<WriteWrap>,
-    cur_file_num : i32,
+    csv_writer : Writer<FileWriteWrap>,
+    writed_row_num : usize,
 }
 
 impl CsvWriter<'_> {
-    pub fn new<'a>(table_info : &'a TableInfo, export_path : &str, file_size : usize, is_gzip : bool) -> CsvWriter<'a> {
-        let mut cur_file_num = 0;
-        if file_size > 0 {
-            cur_file_num = 1;
-        }
-        let csv_writer = match Self::get_inner_csv_writer(table_info, export_path, file_size, cur_file_num, is_gzip) {
+    pub fn new<'a>(table_info : &'a TableInfo, export_path : &str, maximum_file_size : usize, is_gzip : bool) -> CsvWriter<'a> {
+        let csv_writer = match Self::get_inner_csv_writer(export_path, maximum_file_size, is_gzip) {
             Ok(w) => w,
             Err(e) => panic!("{:?}", e),
         };
         return CsvWriter {
             table_info : table_info,
-            export_path : export_path.to_owned(),
-            file_size : file_size,
-            is_gzip : is_gzip,
             csv_writer : csv_writer,
-            cur_file_num : cur_file_num,
+            writed_row_num : 0,
         };
     }
 
@@ -50,27 +40,28 @@ impl CsvWriter<'_> {
         }
     }
 
-    fn get_inner_csv_writer(table_info : &TableInfo, export_path : &str, file_size : usize, file_num : i32, is_gzip : bool) -> Result<csv::Writer<WriteWrap>, Error> {
-        let write_wrap = WriteWrap::new(export_path, file_size, file_num, is_gzip)?;
+    fn get_inner_csv_writer(export_path : &str, file_size : usize, is_gzip : bool) -> Result<csv::Writer<FileWriteWrap>, Error> {
+        let mut file_num  = 0;
+        if file_size > 0 {
+            file_num = 1;
+        }
 
-        let mut csv_writer = csv::WriterBuilder::new()
+        let write_wrap = FileWriteWrap::new(export_path, file_size, file_num, is_gzip)?;
+
+        let csv_writer = csv::WriterBuilder::new()
             .double_quote(false)
             .quote_style(csv::QuoteStyle::Never)
             .from_writer(write_wrap);
-    
-        //write title
-        let mut title_record = csv::StringRecord::new();
-        for col in &table_info.cols {
-            title_record.push_field(&col.name.L);
-        }
-        
-        csv_writer.write_record(&title_record).unwrap();
 
         return Ok(csv_writer);
     }
 }
 
 impl TiDBExportWriter for CsvWriter<'_> {
+    fn writed_row_num(&self) -> usize {
+        return self.writed_row_num;
+    }
+
     fn write_row_data(&mut self, row_data : Box<RowData>) -> Result<(), Error> {
         let datums_res = row_data.get_datum_refs();
         if datums_res.is_err() {
@@ -127,16 +118,16 @@ impl TiDBExportWriter for CsvWriter<'_> {
         if res.is_err() {
             return Err(Error::Other(res.err().unwrap().to_string()));
         }
+        self.writed_row_num += 1;
 
-        return Ok(());
-    }
-
-    fn check_split_file(&mut self) -> Result<(), Error> {
-        if !self.csv_writer.get_ref().is_need_split() {
-            return Ok(());
+        if self.writed_row_num % 100 == 0 {
+            if self.csv_writer.get_ref().is_need_flush() {
+                if let Err(e) = self.csv_writer.flush() {
+                    return Err(Error::Other(e.to_string()));
+                }
+            }
         }
-        self.cur_file_num += 1;
-        self.csv_writer = Self::get_inner_csv_writer(self.table_info, &self.export_path, self.file_size, self.cur_file_num, self.is_gzip)?;
+
         return Ok(());
     }
 
