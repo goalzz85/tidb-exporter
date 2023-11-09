@@ -23,14 +23,27 @@ flate2 = "1.0.25"
 protobuf = { version = "2.8", features = ["bytes"] }
 clap = { version = "4.1.*", features = ["derive"] }
 
+futures = { version = "0.3", features = ["thread-pool", "compat"] }
+futures-executor = "0.3.1"
+futures-timer = "3.0"
+futures-util = { version = "0.3.1", default-features = false, features = ["io", "async-await"] }
+raft = { version = "0.7.0", default-features = false, features = ["protobuf-codec"] }
 tidb_query_datatype = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
 tidb_query_common = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
 tikv_util = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
 collections = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
 txn_types =  {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
 keys = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
-tipb = { git = "https://github.com/pingcap/tipb.git", branch="release-7.1"}
+tipb = { git = "https://github.com/pingcap/tipb.git"}
+kvproto = { git = "https://github.com/pingcap/kvproto.git", branch = "release-7.1" }
 codec = {git = "https://github.com/tikv/tikv.git", branch="release-7.1"}
+grpcio = { version = "0.10.4", default-features = false, features = ["openssl-vendored", "protobuf-codec", "nightly"] }
+grpcio-health = { version = "0.10.4", default-features = false, features = ["protobuf-codec"] }
+yatp = { git = "https://github.com/tikv/yatp.git", branch = "master" }
+tokio-timer = { git = "https://github.com/tikv/tokio", branch = "tokio-timer-hotfix" }
+tokio-executor = { git = "https://github.com/tikv/tokio", branch = "tokio-timer-hotfix" }
+slog = { version = "2.3", features = ["max_level_trace", "release_max_level_debug"] }
+slog-global = { version = "0.1", git = "https://github.com/breeswish/slog-global.git", rev = "d592f88e4dbba5eb439998463054f1a44fbf17b9" }
 
 [patch.crates-io]
 raft = { git = "https://github.com/tikv/raft-rs", branch = "master" }
