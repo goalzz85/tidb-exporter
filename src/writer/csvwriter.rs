@@ -13,8 +13,14 @@ pub struct CsvWriter<'a> {
 }
 
 impl CsvWriter<'_> {
-    pub fn new<'a>(table_info : &'a TableInfo, export_path : &str, maximum_file_size : usize, is_gzip : bool) -> CsvWriter<'a> {
-        let csv_writer = match Self::get_inner_csv_writer(export_path, maximum_file_size, is_gzip) {
+    pub fn new<'a>(table_info : &'a TableInfo,fw : FileWriteWrap, buffer_size_mb : usize) -> CsvWriter<'a> {
+        let buffer_size_mb = if buffer_size_mb <= 0 {
+            10
+        } else {
+            buffer_size_mb
+        };
+        
+        let csv_writer = match Self::get_inner_csv_writer(fw, buffer_size_mb) {
             Ok(w) => w,
             Err(e) => panic!("{:?}", e),
         };
@@ -40,18 +46,13 @@ impl CsvWriter<'_> {
         }
     }
 
-    fn get_inner_csv_writer(export_path : &str, file_size : usize, is_gzip : bool) -> Result<csv::Writer<FileWriteWrap>, Error> {
-        let mut file_num  = 0;
-        if file_size > 0 {
-            file_num = 1;
-        }
-
-        let write_wrap = FileWriteWrap::new(export_path, file_size, file_num, is_gzip)?;
+    fn get_inner_csv_writer(fw : FileWriteWrap, buffer_size : usize) -> Result<csv::Writer<FileWriteWrap>, Error> {
 
         let csv_writer = csv::WriterBuilder::new()
             .double_quote(false)
             .quote_style(csv::QuoteStyle::Never)
-            .from_writer(write_wrap);
+            .buffer_capacity(buffer_size * 1024 * 1024)
+            .from_writer(fw);
 
         return Ok(csv_writer);
     }

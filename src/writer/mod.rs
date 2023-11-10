@@ -98,7 +98,12 @@ pub struct FileWriteWrap {
 }
 
 impl FileWriteWrap {
-    pub fn new(export_path : &str, maximum_file_size : usize, file_num : i32, is_gzip : bool) -> Result<FileWriteWrap, Error> {
+    pub fn new(export_path : &str, maximum_file_size : usize, is_gzip : bool) -> Result<FileWriteWrap, Error> {
+        let mut file_num = 0;
+        if maximum_file_size > 0 {
+            file_num = 1;
+        }
+
         let w = Self::get_write(export_path, file_num, is_gzip)?;
 
         return Ok(FileWriteWrap {

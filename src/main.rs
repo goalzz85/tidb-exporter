@@ -7,6 +7,7 @@ mod datum;
 mod writer;
 
 use clap::{Parser, builder::ArgPredicate};
+use writer::FileWriteWrap;
 
 use crate::{storagenode::RocksDbStorageNode, writer::{TiDBExportWriter, csvwriter::CsvWriter}, tidbtypes::TableInfo};
 
@@ -103,7 +104,13 @@ fn main() {
     let mut export_writer : Box<dyn TiDBExportWriter>;
     if cli.writer.unwrap().eq("csv") {
         let file_size = cli.file_size * 1024 * 1024;
-        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_size, cli.gzip));
+        if let Ok(fw) = FileWriteWrap::new(cli.export.unwrap().as_str(), file_size, cli.gzip) {
+            export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), fw, 50));
+        } else {
+            print!("create csv export writer failed");
+            return;
+        }
+        
     } else {
         print!("not supoort writer!");
         return;
