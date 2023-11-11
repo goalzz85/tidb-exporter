@@ -1,15 +1,40 @@
+use std::{cell::RefCell, rc::Rc, io::Write};
+
 use csv::Writer;
 use tidb_query_datatype::FieldTypeTp;
 
 use crate::{writer::TiDBExportWriter, datum::{RowData, DatumRef}, errors::Error, tidbtypes::TableInfo};
 
-use super::FileWriteWrap;
+use super::{FileWriteWrap, buf::LinkedBuffer};
+
+struct LinkedBufferWrapper {
+    buf : Rc<RefCell<LinkedBuffer>>
+}
+
+impl LinkedBufferWrapper {
+    pub fn new(buf : Rc<RefCell<LinkedBuffer>>) -> LinkedBufferWrapper {
+        return LinkedBufferWrapper { buf }
+    }
+}
+
+impl Write for LinkedBufferWrapper {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buf.borrow_mut().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.buf.borrow_mut().flush()
+    }
+}
+
 
 #[allow(unused_variables, dead_code)]
 pub struct CsvWriter<'a> {
     table_info : &'a TableInfo,
-    csv_writer : Writer<FileWriteWrap>,
+    csv_writer : Writer<LinkedBufferWrapper>,
     writed_row_num : usize,
+    buffer : Rc<RefCell<LinkedBuffer>>,
+    fw : FileWriteWrap,
 }
 
 impl CsvWriter<'_> {
@@ -19,15 +44,19 @@ impl CsvWriter<'_> {
         } else {
             buffer_size_mb
         };
+
+        let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 200)));
         
-        let csv_writer = match Self::get_inner_csv_writer(fw, buffer_size_mb) {
+        let csv_writer = match Self::get_inner_csv_writer(buf.clone(), buffer_size_mb) {
             Ok(w) => w,
             Err(e) => panic!("{:?}", e),
         };
         return CsvWriter {
-            table_info : table_info,
-            csv_writer : csv_writer,
+            table_info,
+            csv_writer,
             writed_row_num : 0,
+            buffer : buf.clone(), //500MB
+            fw
         };
     }
 
@@ -46,13 +75,13 @@ impl CsvWriter<'_> {
         }
     }
 
-    fn get_inner_csv_writer(fw : FileWriteWrap, buffer_size : usize) -> Result<csv::Writer<FileWriteWrap>, Error> {
+    fn get_inner_csv_writer(buf : Rc<RefCell<LinkedBuffer>>, buffer_size : usize) -> Result<csv::Writer<LinkedBufferWrapper>, Error> {
 
         let csv_writer = csv::WriterBuilder::new()
             .double_quote(false)
             .quote_style(csv::QuoteStyle::Never)
             .buffer_capacity(buffer_size * 1024 * 1024)
-            .from_writer(fw);
+            .from_writer(LinkedBufferWrapper::new(buf));
 
         return Ok(csv_writer);
     }
@@ -122,10 +151,13 @@ impl TiDBExportWriter for CsvWriter<'_> {
         self.writed_row_num += 1;
 
         if self.writed_row_num % 100 == 0 {
-            if self.csv_writer.get_ref().is_need_flush() {
-                if let Err(e) = self.csv_writer.flush() {
-                    return Err(Error::Other(e.to_string()));
-                }
+            //TODO
+            
+            if self.buffer.borrow().len() > self.fw.maximum_file_size() {
+                _ = self.csv_writer.flush();
+                _ = self.buffer.borrow().write_to(&mut self.fw);
+                self.buffer.borrow_mut().reset();
+                _ = self.fw.flush();
             }
         }
 

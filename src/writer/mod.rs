@@ -7,6 +7,7 @@ use crate::datum::RowData;
 
 use super::errors::Error;
 
+mod buf;
 pub mod csvwriter;
 
 pub trait TiDBExportWriter {
@@ -162,6 +163,7 @@ impl FileWriteWrap {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_need_flush(&self) -> bool {
         return self.is_need_flush;
     }
@@ -176,6 +178,10 @@ impl FileWriteWrap {
         }
 
         panic!("create new file to export failed");
+    }
+
+    pub fn maximum_file_size(&self) -> usize {
+        self.maximum_file_size
     }
 }
 
