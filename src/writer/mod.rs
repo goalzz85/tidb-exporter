@@ -179,10 +179,6 @@ impl FileWriteWrap {
 
         panic!("create new file to export failed");
     }
-
-    pub fn maximum_file_size(&self) -> usize {
-        self.maximum_file_size
-    }
 }
 
 impl Write for FileWriteWrap {

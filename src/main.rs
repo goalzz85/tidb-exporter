@@ -105,7 +105,7 @@ fn main() {
     if cli.writer.unwrap().eq("csv") {
         let file_size = cli.file_size * 1024 * 1024;
         if let Ok(fw) = FileWriteWrap::new(cli.export.unwrap().as_str(), file_size, cli.gzip) {
-            export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), fw, 50));
+            export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), fw));
         } else {
             print!("create csv export writer failed");
             return;

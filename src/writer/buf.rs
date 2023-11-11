@@ -19,14 +19,22 @@ impl LinkedBuffer {
         }
     }
 
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        return self.capacity;
+    }
+
+    #[inline]
     pub fn block_size(&self) -> usize {
         return self.block_size;
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         return self.used_size;
     }
 
+    #[inline]
     pub fn reset(&mut self) {
         self.used_size = 0;
     }

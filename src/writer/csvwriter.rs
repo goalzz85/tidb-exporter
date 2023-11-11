@@ -38,16 +38,10 @@ pub struct CsvWriter<'a> {
 }
 
 impl CsvWriter<'_> {
-    pub fn new<'a>(table_info : &'a TableInfo,fw : FileWriteWrap, buffer_size_mb : usize) -> CsvWriter<'a> {
-        let buffer_size_mb = if buffer_size_mb <= 0 {
-            10
-        } else {
-            buffer_size_mb
-        };
-
-        let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 200)));
+    pub fn new<'a>(table_info : &'a TableInfo,fw : FileWriteWrap) -> CsvWriter<'a> {
+        let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 10)));//100MB
         
-        let csv_writer = match Self::get_inner_csv_writer(buf.clone(), buffer_size_mb) {
+        let csv_writer = match Self::get_inner_csv_writer(buf.clone()) {
             Ok(w) => w,
             Err(e) => panic!("{:?}", e),
         };
@@ -55,7 +49,7 @@ impl CsvWriter<'_> {
             table_info,
             csv_writer,
             writed_row_num : 0,
-            buffer : buf.clone(), //500MB
+            buffer : buf.clone(),
             fw
         };
     }
@@ -75,12 +69,11 @@ impl CsvWriter<'_> {
         }
     }
 
-    fn get_inner_csv_writer(buf : Rc<RefCell<LinkedBuffer>>, buffer_size : usize) -> Result<csv::Writer<LinkedBufferWrapper>, Error> {
+    fn get_inner_csv_writer(buf : Rc<RefCell<LinkedBuffer>>) -> Result<csv::Writer<LinkedBufferWrapper>, Error> {
 
         let csv_writer = csv::WriterBuilder::new()
             .double_quote(false)
             .quote_style(csv::QuoteStyle::Never)
-            .buffer_capacity(buffer_size * 1024 * 1024)
             .from_writer(LinkedBufferWrapper::new(buf));
 
         return Ok(csv_writer);
@@ -152,12 +145,18 @@ impl TiDBExportWriter for CsvWriter<'_> {
 
         if self.writed_row_num % 100 == 0 {
             //TODO
-            
-            if self.buffer.borrow().len() > self.fw.maximum_file_size() {
+            let buffer_ref = self.buffer.borrow();
+            let is_about_to_overflow = buffer_ref.capacity() / 10 * 7  < buffer_ref.len(); //70%
+            if is_about_to_overflow {
+                drop(buffer_ref);
                 _ = self.csv_writer.flush();
-                _ = self.buffer.borrow().write_to(&mut self.fw);
+                if let Err(e) = self.buffer.borrow().write_to(&mut self.fw) {
+                    return Err(Error::IO(e.to_string()));
+                }
                 self.buffer.borrow_mut().reset();
-                _ = self.fw.flush();
+                if self.fw.is_need_flush() {
+                    _ = self.fw.flush();
+                }
             }
         }
 
