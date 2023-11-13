@@ -39,7 +39,7 @@ pub struct CsvWriter<'a> {
 
 impl CsvWriter<'_> {
     pub fn new<'a>(table_info : &'a TableInfo,fw : FileWriteWrap) -> CsvWriter<'a> {
-        let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 10)));//100MB
+        let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 5, false)));//100MB
         
         let csv_writer = match Self::get_inner_csv_writer(buf.clone()) {
             Ok(w) => w,
@@ -146,8 +146,7 @@ impl TiDBExportWriter for CsvWriter<'_> {
         if self.writed_row_num % 100 == 0 {
             //TODO
             let buffer_ref = self.buffer.borrow();
-            let is_about_to_overflow = buffer_ref.capacity() / 10 * 7  < buffer_ref.len(); //70%
-            if is_about_to_overflow {
+            if buffer_ref.is_full() {
                 drop(buffer_ref);
                 _ = self.csv_writer.flush();
                 if let Err(e) = self.buffer.borrow().write_to(&mut self.fw) {

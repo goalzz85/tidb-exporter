@@ -6,16 +6,18 @@ pub struct LinkedBuffer {
     blocks : Vec<Box<Vec<u8>>>,
     capacity : usize,
     used_size : usize,
+    is_fixed : bool,
 }
 
 #[allow(unused_variables, dead_code)]
 impl LinkedBuffer {
-    pub fn new(block_size : usize, block_num : usize) -> LinkedBuffer {
+    pub fn new(block_size : usize, block_num : usize, is_fixed : bool) -> LinkedBuffer {
         return LinkedBuffer {
             block_size,
             blocks : Vec::with_capacity(block_num),
             capacity : block_size * block_num,
             used_size : 0,
+            is_fixed,
         }
     }
 
@@ -37,6 +39,11 @@ impl LinkedBuffer {
     #[inline]
     pub fn reset(&mut self) {
         self.used_size = 0;
+    }
+
+    #[inline]
+    pub fn is_full(&self) -> bool {
+        self.used_size >= self.capacity
     }
 
     pub fn write_to <T : std::io::Write> (&self, w : &mut T) -> std::io::Result<usize> {
@@ -67,7 +74,7 @@ impl LinkedBuffer {
     }
 
     pub fn get_cur_writable_block<'a>(&'a mut self) -> std::io::Result<&'a mut Vec<u8>> {
-        if self.used_size == self.capacity {
+        if self.used_size >= self.capacity && self.is_fixed {
             return Err(std::io::Error::new(std::io::ErrorKind::Other, "out of the buffer's capacity"));
         }
 
@@ -94,7 +101,7 @@ impl Write for LinkedBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let buf_original_len = buf.len();
         let mut buf_mut_ref = buf;
-        if buf_original_len + self.used_size > self.capacity {
+        if buf_original_len + self.used_size > self.capacity && self.is_fixed {
             return Err(std::io::Error::new(std::io::ErrorKind::Other, "out of the buffer's capacity"));
         }
          
