@@ -1,22 +1,29 @@
 
-use std::{io::Write, path::{Path, PathBuf}, fs::File};
+use std::{io::Write, path::{Path, PathBuf}, fs::File, cell::RefCell, rc::Rc};
 
 use flate2::write::GzEncoder;
 
-use crate::datum::RowData;
+use crate::{datum::RowData, tidbtypes::TableInfo};
+
+use self::buf::LinkedBuffer;
 
 use super::errors::Error;
 
+pub use csvexporter::CsvExporter;
+
+pub mod exporter;
+
 mod buf;
-pub mod csvwriter;
+mod csvexporter;
+
 
 pub trait TiDBExportWriter {
-    fn write_row_data(&mut self, row_data : Box<RowData>) -> Result<(), Error>;
-    fn flush(&mut self);
+    fn write_row_data(&mut self, row_data : Box<RowData>, table_info : &TableInfo) -> Result<(), Error>;
+    fn flush(&mut self) -> Result<(), Error>;
     fn writed_row_num(&self) -> usize;
 }
 
-pub trait FileWrite : Write {
+pub trait FileWrite : Write + Send {
     fn writed_size(&self) -> usize;
 }
 
@@ -90,7 +97,7 @@ impl Write for GzFileWrap {
 }
 
 pub struct FileWriteWrap {
-    export_path : String,
+    write_path : String,
     maximum_file_size : usize,
     cur_write : Box<dyn FileWrite>,
     cur_file_num : i32,
@@ -99,16 +106,16 @@ pub struct FileWriteWrap {
 }
 
 impl FileWriteWrap {
-    pub fn new(export_path : &str, maximum_file_size : usize, is_gzip : bool) -> Result<FileWriteWrap, Error> {
+    pub fn new(write_path : &str, maximum_file_size : usize, is_gzip : bool) -> Result<FileWriteWrap, Error> {
         let mut file_num = 0;
         if maximum_file_size > 0 {
             file_num = 1;
         }
 
-        let w = Self::get_write(export_path, file_num, is_gzip)?;
+        let w = Self::get_write(write_path, file_num, is_gzip)?;
 
         return Ok(FileWriteWrap {
-            export_path : export_path.to_string(),
+            write_path : write_path.to_string(),
             maximum_file_size : maximum_file_size,
             cur_file_num : file_num,
             cur_write : w,
@@ -117,8 +124,8 @@ impl FileWriteWrap {
         });
     }
 
-    fn get_write(export_path : &str, file_num : i32, is_gzip : bool) -> Result<Box<dyn FileWrite>, Error> {
-        let path = Path::new(&export_path);
+    fn get_write(write_path : &str, file_num : i32, is_gzip : bool) -> Result<Box<dyn FileWrite>, Error> {
+        let path = Path::new(&write_path);
         let mut new_path = PathBuf::new();
         let mut new_file_name;
 
@@ -170,7 +177,7 @@ impl FileWriteWrap {
 
     pub fn generate_next_file(&mut self) {
         let file_num = self.cur_file_num + 1;
-        if let Ok(fw) = Self::get_write(&self.export_path, file_num, self.is_gzip) {
+        if let Ok(fw) = Self::get_write(&self.write_path, file_num, self.is_gzip) {
             self.cur_write = fw;
             self.cur_file_num = file_num;
             self.is_need_flush = false;
@@ -195,5 +202,25 @@ impl Write for FileWriteWrap {
             self.generate_next_file();
         }
         return self.cur_write.flush();
+    }
+}
+
+struct LinkedBufferWrapper {
+    buf : Rc<RefCell<LinkedBuffer>>
+}
+
+impl LinkedBufferWrapper {
+    pub fn new(buf : Rc<RefCell<LinkedBuffer>>) -> LinkedBufferWrapper {
+        return LinkedBufferWrapper { buf }
+    }
+}
+
+impl Write for LinkedBufferWrapper {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        (*(self.buf)).borrow_mut().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        (*(self.buf)).borrow_mut().flush()
     }
 }

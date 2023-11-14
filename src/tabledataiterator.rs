@@ -8,8 +8,8 @@ use txn_types::{WriteRef, WriteType, TimeStamp};
 pub struct TableDataIterator<'a, 'b> {
     table_info : &'a TableInfo,
 
-    next_readed_row_data_buf : Option<Box<RowData<'a>>>,
-    next_data_cf_default_buf : Option<Box<RowData<'a>>>,
+    next_readed_row_data_buf : Option<Box<RowData>>,
+    next_data_cf_default_buf : Option<Box<RowData>>,
     next_data_cf_write_buf : Option<(Box<[u8]>, Box<[u8]>)>,
 
     table_data_cf_default_iter : DBIterator<'b>,
@@ -35,7 +35,7 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
         };
     }
 
-    fn get_inner_row_data_from_default(&mut self) -> Option<Result<Box<RowData<'a>>>> {
+    fn get_inner_row_data_from_default(&mut self) -> Option<Result<Box<RowData>>> {
         if self.next_data_cf_default_buf.is_some() {
             return Some(Result::Ok(self.next_data_cf_default_buf.take().unwrap()));
         }
@@ -93,7 +93,7 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
     }
 
 
-    fn get_inner_row_data(&mut self) -> Option<Result<Box<RowData<'a>>>> {
+    fn get_inner_row_data(&mut self) -> Option<Result<Box<RowData>>> {
         let mut cur_handle_id : i64 = 0;
         let mut cur_row_data : Option<Box<RowData>> = None;
         let mut max_delete_ts : TimeStamp = TimeStamp::zero();
@@ -210,7 +210,7 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
 }
 
 impl <'a, 'b> Iterator for TableDataIterator<'a,'b> {
-    type Item = Box<RowData<'a>>;
+    type Item = Box<RowData>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.get_inner_row_data() {

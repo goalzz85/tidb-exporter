@@ -1,44 +1,75 @@
-use std::{cell::RefCell, rc::Rc, io::Write};
+use std::{sync::{Mutex, Arc}, cell::RefCell, rc::Rc, io::Write, thread::{JoinHandle, self}};
 
+use crossbeam_channel::Receiver;
 use csv::Writer;
 use tidb_query_datatype::FieldTypeTp;
 
-use crate::{writer::TiDBExportWriter, datum::{RowData, DatumRef}, errors::Error, tidbtypes::TableInfo};
+use crate::{errors::Error, datum::{DatumRef, RowData}, tidbtypes::TableInfo};
 
-use super::{FileWriteWrap, buf::LinkedBuffer};
+use super::{FileWriteWrap, buf::LinkedBuffer, LinkedBufferWrapper, exporter::{TiDBFileExporter, TiDBExporter}};
 
-struct LinkedBufferWrapper {
-    buf : Rc<RefCell<LinkedBuffer>>
+
+pub struct CsvExporter {
+    fw : Arc<Mutex<FileWriteWrap>>,
+    table_info : TableInfo,
+    thread_num : usize,
 }
 
-impl LinkedBufferWrapper {
-    pub fn new(buf : Rc<RefCell<LinkedBuffer>>) -> LinkedBufferWrapper {
-        return LinkedBufferWrapper { buf }
+impl CsvExporter {
+    pub fn new(table_info : TableInfo, write_path : &str, maximum_file_size_mb : usize, is_gzip : bool) -> CsvExporter {
+        match Self::create_file_write_wrap(write_path, maximum_file_size_mb, is_gzip) {
+            Ok(fw) => {
+                return CsvExporter {
+                    table_info,
+                    fw : Arc::new(Mutex::new(fw)),
+                    thread_num : 3,
+                }
+            },
+            Err(e) => panic!("{}", e.to_string()),
+        }
     }
 }
 
-impl Write for LinkedBufferWrapper {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buf.borrow_mut().write(buf)
+impl TiDBFileExporter for CsvExporter {}
+impl TiDBExporter for CsvExporter {
+    fn start_export(&mut self, rx : Receiver<Vec<Box<RowData>>>) -> Vec<JoinHandle<()>> {
+        let mut handlers = Vec::with_capacity(self.thread_num);
+        for _ in 0..self.thread_num {
+            let fw_arc = self.fw.clone();
+            let rx_thread = rx.clone();
+            let table_info = self.table_info.clone();
+            let handle = thread::spawn(move || {
+                let mut export_writer = Box::new(CsvWriter::new(&fw_arc));
+                for blocks in rx_thread {
+                    for row_data in blocks {
+                        export_writer.write_row_data(row_data, &table_info).unwrap();
+                    }
+                }
+                _ = export_writer.flush();
+            });
+            handlers.push(handle);
+        }
+
+        return handlers;
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.buf.borrow_mut().flush()
+    fn set_thread_num(&mut self, num : usize) {
+        if num > 0 {
+            self.thread_num = num;
+        }
     }
 }
 
 
-#[allow(unused_variables, dead_code)]
-pub struct CsvWriter<'a> {
-    table_info : &'a TableInfo,
+pub struct CsvWriter<'b> {
     csv_writer : Writer<LinkedBufferWrapper>,
     writed_row_num : usize,
     buffer : Rc<RefCell<LinkedBuffer>>,
-    fw : FileWriteWrap,
+    fw : &'b Mutex<FileWriteWrap>,
 }
 
 impl CsvWriter<'_> {
-    pub fn new<'a>(table_info : &'a TableInfo,fw : FileWriteWrap) -> CsvWriter<'a> {
+    pub fn new<'b>(fw : &'b Mutex<FileWriteWrap>) -> CsvWriter<'b> {
         let buf = Rc::new(RefCell::new(LinkedBuffer::new(1024 * 1024 * 10, 5, false)));//100MB
         
         let csv_writer = match Self::get_inner_csv_writer(buf.clone()) {
@@ -46,7 +77,6 @@ impl CsvWriter<'_> {
             Err(e) => panic!("{:?}", e),
         };
         return CsvWriter {
-            table_info,
             csv_writer,
             writed_row_num : 0,
             buffer : buf.clone(),
@@ -78,15 +108,9 @@ impl CsvWriter<'_> {
 
         return Ok(csv_writer);
     }
-}
 
-impl TiDBExportWriter for CsvWriter<'_> {
-    fn writed_row_num(&self) -> usize {
-        return self.writed_row_num;
-    }
-
-    fn write_row_data(&mut self, row_data : Box<RowData>) -> Result<(), Error> {
-        let datums_res = row_data.get_datum_refs();
+    fn write_row_data(&mut self, row_data : Box<RowData>, table_info : &TableInfo) -> Result<(), Error> {
+        let datums_res = row_data.get_datum_refs(table_info);
         if datums_res.is_err() {
             //print!("{}", datums_res.err().unwrap());
             return Err(Error::CorruptedData("row data to datum_refs error".to_owned()));
@@ -149,12 +173,16 @@ impl TiDBExportWriter for CsvWriter<'_> {
             if buffer_ref.is_full() {
                 drop(buffer_ref);
                 _ = self.csv_writer.flush();
-                if let Err(e) = self.buffer.borrow().write_to(&mut self.fw) {
-                    return Err(Error::IO(e.to_string()));
-                }
-                self.buffer.borrow_mut().reset();
-                if self.fw.is_need_flush() {
-                    _ = self.fw.flush();
+                if let Ok(mut fw) = self.fw.lock() {
+                    if let Err(e) = self.buffer.borrow().write_to(fw.by_ref()) {
+                        return Err(Error::IO(e.to_string()));
+                    }
+                    (*(self.buffer)).borrow_mut().reset();
+                    if fw.is_need_flush() {
+                        _ = fw.flush();
+                    }
+                } else {
+                    return Err(Error::Other("lock for writing failed.".to_string()));
                 }
             }
         }
@@ -162,7 +190,22 @@ impl TiDBExportWriter for CsvWriter<'_> {
         return Ok(());
     }
 
-    fn flush(&mut self) {
+    fn flush(&mut self) -> Result<(), Error> {
         _ = self.csv_writer.flush();
+        if let Ok(mut fw) = self.fw.lock() {
+            if self.buffer.borrow().len() > 0 {
+                if let Err(e) = self.buffer.borrow().write_to(fw.by_ref()) {
+                    return Err(Error::IO(e.to_string()));
+                }
+                (*(self.buffer)).borrow_mut().reset();
+            }
+            if let Err(e) = fw.flush() {
+                return Err(Error::IO(e.to_string()));
+            }
+
+            return Ok(());
+        } else {
+            return Err(Error::Other("lock for writing failed.".to_string()));
+        }
     }
 }
