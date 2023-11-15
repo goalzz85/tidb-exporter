@@ -168,19 +168,20 @@ impl CsvWriter<'_> {
         self.writed_row_num += 1;
 
         if self.writed_row_num % 100 == 0 {
-            //TODO
             let buffer_ref = self.buffer.borrow();
             if buffer_ref.is_full() {
                 drop(buffer_ref);
                 _ = self.csv_writer.flush();
                 if let Ok(mut fw) = self.fw.lock() {
+                    
+                    if fw.is_need_flush() {
+                        _ = fw.flush();
+                    }
+
                     if let Err(e) = self.buffer.borrow().write_to(fw.by_ref()) {
                         return Err(Error::IO(e.to_string()));
                     }
                     (*(self.buffer)).borrow_mut().reset();
-                    if fw.is_need_flush() {
-                        _ = fw.flush();
-                    }
                 } else {
                     return Err(Error::Other("lock for writing failed.".to_string()));
                 }

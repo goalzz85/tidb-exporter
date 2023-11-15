@@ -28,7 +28,7 @@ struct Cli {
     #[arg(short, long, requires_if(ArgPredicate::IsPresent, "exporter"))]
     table : Option<String>,
 
-    ///the writer that the data will be written to. only support 'csv' for now.
+    ///the exporter that the data will be written to. only support 'csv' for now.
     #[arg(short, long, value_names(["csv"]))]
     exporter : Option<String>,
 
@@ -39,7 +39,7 @@ struct Cli {
     #[arg(short, long, default_value_t = false)]
     gzip : bool,
 
-    ///maximum size of a single file, and is measured in MB. file will be splitted into multiple files.
+    ///maximum size of a single file, and is measured in MB. the file will be splitted into multiple files depend on the internal write buffer size (default: 50MB) and whether gzip compression is enabled.
     #[arg(short = 's', long, default_value_t = 0)]
     file_size : usize,
 
