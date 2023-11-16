@@ -102,7 +102,6 @@ pub struct FileWriteWrap {
     cur_write : Box<dyn FileWrite>,
     cur_file_num : i32,
     is_gzip : bool,
-    is_need_flush : bool,
 }
 
 impl FileWriteWrap {
@@ -120,7 +119,6 @@ impl FileWriteWrap {
             cur_file_num : file_num,
             cur_write : w,
             is_gzip : is_gzip,
-            is_need_flush : false,
         });
     }
 
@@ -171,8 +169,8 @@ impl FileWriteWrap {
     }
 
     #[allow(dead_code)]
-    pub fn is_need_flush(&self) -> bool {
-        return self.is_need_flush;
+    pub fn is_exceed_file_size(&self) -> bool {
+        return self.maximum_file_size > 0 && self.cur_write.writed_size() > self.maximum_file_size;
     }
 
     pub fn generate_next_file(&mut self) {
@@ -180,7 +178,6 @@ impl FileWriteWrap {
         if let Ok(fw) = Self::get_write(&self.write_path, file_num, self.is_gzip) {
             self.cur_write = fw;
             self.cur_file_num = file_num;
-            self.is_need_flush = false;
             return;
         }
 
@@ -190,17 +187,10 @@ impl FileWriteWrap {
 
 impl Write for FileWriteWrap {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let res: Result<usize, std::io::Error> = self.cur_write.write(buf);
-        if self.maximum_file_size > 0 && self.cur_write.writed_size() > self.maximum_file_size {
-            self.is_need_flush = true;
-        }
-        return res;
+        return self.cur_write.write(buf);
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if self.maximum_file_size > 0 && self.cur_write.writed_size() > self.maximum_file_size {
-            self.generate_next_file();
-        }
         return self.cur_write.flush();
     }
 }

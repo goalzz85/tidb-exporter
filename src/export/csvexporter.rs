@@ -174,8 +174,8 @@ impl CsvWriter<'_> {
                 _ = self.csv_writer.flush();
                 if let Ok(mut fw) = self.fw.lock() {
                     
-                    if fw.is_need_flush() {
-                        _ = fw.flush();
+                    if fw.is_exceed_file_size() {
+                        _ = fw.generate_next_file();
                     }
 
                     if let Err(e) = self.buffer.borrow().write_to(fw.by_ref()) {
@@ -193,13 +193,20 @@ impl CsvWriter<'_> {
 
     fn flush(&mut self) -> Result<(), Error> {
         _ = self.csv_writer.flush();
+        
         if let Ok(mut fw) = self.fw.lock() {
             if self.buffer.borrow().len() > 0 {
+
+                if fw.is_exceed_file_size() {
+                    _ = fw.generate_next_file();
+                }
+
                 if let Err(e) = self.buffer.borrow().write_to(fw.by_ref()) {
                     return Err(Error::IO(e.to_string()));
                 }
                 (*(self.buffer)).borrow_mut().reset();
             }
+
             if let Err(e) = fw.flush() {
                 return Err(Error::IO(e.to_string()));
             }
