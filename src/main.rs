@@ -4,11 +4,14 @@ mod storagenode;
 mod tidbtypes;
 mod tabledataiterator;
 mod datum;
-mod writer;
+mod export;
+
+use std::{sync::Arc, thread};
 
 use clap::{Parser, builder::ArgPredicate};
+use export::{exporter::TiDBExporter, CsvExporter};
 
-use crate::{storagenode::RocksDbStorageNode, writer::{TiDBExportWriter, csvwriter::CsvWriter}, tidbtypes::TableInfo};
+use crate::{storagenode::RocksDbStorageNode, tidbtypes::TableInfo};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -22,23 +25,27 @@ struct Cli {
     database : Option<String>,
 
     ///table name that need to be exported, must be in the database specified by --database
-    #[arg(short, long, requires_if(ArgPredicate::IsPresent, "writer"))]
+    #[arg(short, long, requires_if(ArgPredicate::IsPresent, "exporter"))]
     table : Option<String>,
 
-    ///the writer that the data will be written to. only support 'csv' for now.
+    ///the exporter that the data will be written to. only support 'csv' for now.
     #[arg(short, long, value_names(["csv"]))]
-    writer : Option<String>,
+    exporter : Option<String>,
 
-    #[arg(short, long, required_if_eq("writer", "csv"))]
-    export : Option<String>,
+    #[arg(short = 'w', long, required_if_eq("exporter", "csv"))]
+    write_path : Option<String>,
 
     ///compressing exported files by gzip or not.
     #[arg(short, long, default_value_t = false)]
     gzip : bool,
 
-    ///maximum size of data written to a single file is measured in MB. file will be splitted into multiple files with file size smaller than the file-data-size you have set.
+    ///maximum size of a single file, and is measured in MB. the file will be splitted into multiple files depend on the internal write buffer size (default: 50MB) and whether gzip compression is enabled.
     #[arg(short = 's', long, default_value_t = 0)]
-    file_data_size : usize,
+    file_size : usize,
+
+    ///number of threads for concurrent exporting.
+    #[arg(short = 'n', long, default_value_t = 3)]
+    thread_num : usize,
 }
 
 fn main() {
@@ -100,17 +107,9 @@ fn main() {
         table_infos.push(original_table_info);
     }
 
-    let mut export_writer : Box<dyn TiDBExportWriter>;
-    if cli.writer.unwrap().eq("csv") {
-        let file_data_size = cli.file_data_size * 1024 * 1024;
-        export_writer = Box::new(CsvWriter::new(table_info_opt.unwrap(), cli.export.unwrap().as_str(), file_data_size, cli.gzip));
-    } else {
-        print!("not supoort writer!");
-        return;
-    }
-
+    let rn_arc = Arc::new(rocksdb_node);
     for table_info in table_infos {
-        export_data(&rocksdb_node, table_info, export_writer.as_mut());
+        export_data(rn_arc.clone(), table_info, &cli);
     }
 }
 
@@ -130,31 +129,62 @@ fn print_tables(rocksdb_node : &RocksDbStorageNode, db_id : i64) {
 }
 
 
-fn export_data(rocksdb_node : &RocksDbStorageNode, table_info : &TableInfo, export_writer : &mut dyn TiDBExportWriter) {
-    let data_iterator = match rocksdb_node.get_table_data_iter(table_info) {
-        Ok(i) => i,
-        Err(..) => {
-            print!("get data iterator error.");
-            return;
-        }
-    };
+fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, cli : &Cli) {
+    let (tx, rx) = crossbeam_channel::bounded(10);
+    let transmitter_handler;
+    {
+        let rd_node = rocksdb_node.clone();
+        let table_clone = table_info.clone();
+        transmitter_handler = thread::spawn(move || {
+            if let Ok(data_iterator) = rd_node.get_table_data_iter(&table_clone) {
+                let rows_block_size : usize = 100;
 
-    let mut records_num = 0;
-    for row_data in data_iterator {
-        match export_writer.write_row_data(row_data) {
-            Ok(_) => {
-                records_num += 1;
-                if records_num % 100 == 0 {
-                    match export_writer.check_split_file() {
-                        Ok(()) => continue,
-                        Err(e) => print!("{:?}\n", e)
+                let mut rows_block = Vec::with_capacity(rows_block_size);
+
+                for row_data in data_iterator {
+                    rows_block.push(row_data);
+                    if rows_block.len() == rows_block_size {
+                        tx.send( rows_block).unwrap();
+                        rows_block = Vec::with_capacity(rows_block_size);
                     }
                 }
-            },
-            Err(e) => {
-                print!("{:?}\n", e);
+                if !rows_block.is_empty() {
+                    tx.send( rows_block).unwrap();
+                }
+            } else {
+                panic!("get data iterator failed");
             }
-        }
+            drop(rd_node);
+        });
     }
-    export_writer.flush();
+
+    let thread_num = cli.thread_num;
+    let mut exporter = get_export_writer_by_cli(cli, table_info);
+    exporter.set_thread_num(thread_num);
+
+    let handlers = exporter.start_export(rx.clone());
+
+    _ = transmitter_handler.join();
+    for h in handlers {
+        _ = h.join();
+    }
+    drop(rx);
+}
+
+fn get_export_writer_by_cli(cli : &Cli, table_info : &TableInfo) -> Box<dyn TiDBExporter> {
+    let exporter_name = cli.exporter.clone().unwrap_or("csv".to_string());
+
+    if exporter_name.eq("csv") {
+        return Box::new(get_csv_exporter(cli, table_info));
+    }
+
+    panic!("exporter {} not exists.", exporter_name);
+}
+
+fn get_csv_exporter(cli : &Cli, table_info : &TableInfo) -> CsvExporter {
+    let write_path = cli.write_path.clone().unwrap();
+    let file_size_mb = cli.file_size;
+    let is_gzip = cli.gzip;
+
+    return CsvExporter::new(table_info.clone(), &write_path, file_size_mb, is_gzip);
 }

@@ -9,6 +9,10 @@ pub enum Error {
 
     #[error("CorruptData: {0}")]
     CorruptedData(String),
+
+    #[error("IO: {0}")]
+    IO(String),
+
     #[error("Other: {0}")]
     Other(String),
 }

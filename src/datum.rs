@@ -17,16 +17,15 @@ use txn_types::{Key, TimeStamp};
 
 
 //some code are copyed from tikv RowSlice
-pub struct RowData<'a> {
+pub struct RowData {
     pub handle_int : i64,
     pub append_ts : TimeStamp,
     key_data : Box<[u8]>,
     val_data : Box<[u8]>,
     pri_data : Box<[u8]>,
-    table_info : &'a TableInfo,
 }
 
-impl <'a> RowData<'a> {
+impl RowData {
     pub fn new(key_data : Box<[u8]>, val_data : Box<[u8]>, table_info : &TableInfo) -> RowData {
         
         let key = Key::from_raw(key_data.as_ref());
@@ -37,7 +36,6 @@ impl <'a> RowData<'a> {
             key_data: key_data,
             val_data: val_data,
             pri_data: Box::new([0; 8]),
-            table_info: table_info
         };
 
         if table_info.pk_is_handle {
@@ -51,14 +49,14 @@ impl <'a> RowData<'a> {
         return row_data;
     }
 
-    pub fn get_datum_refs(&'a self) -> Result<Vec<DatumRef<'a, 'a>>> {
+    pub fn get_datum_refs<'a, 'b> (&'b self, table_info : &'a TableInfo) -> Result<Vec<DatumRef<'b, 'a>>> {
         let mut data = self.val_data.as_ref();
         assert_eq!(data.read_u8()?, CODEC_VERSION);
         let is_big = data.read_u8()? & 1 == 1;
         if is_big {
-            return self.get_datum_refs_as_big(data);
+            return self.get_datum_refs_as_big(data, table_info);
         } else {
-            return self.get_datum_refs_as_small(data);
+            return self.get_datum_refs_as_small(data, table_info);
         }
     }
 
@@ -70,15 +68,15 @@ impl <'a> RowData<'a> {
         }
     }
 
-    fn get_datum_refs_as_small (&'a self, mut data : &'a [u8]) -> Result<Vec<DatumRef<'a, 'a>>> {
+    fn get_datum_refs_as_small<'a, 'b> (&'b self, mut data : &'b [u8], table_info : &'a TableInfo) -> Result<Vec<DatumRef<'b, 'a>>> {
         let non_null_cnt = data.read_u16_le()? as usize;
         let null_cnt = data.read_u16_le()? as usize;
-        let non_null_ids : LeBytes<'a, u8> = read_le_bytes(&mut data, non_null_cnt)?;
-        let null_ids : LeBytes<'a, u8> = read_le_bytes(&mut data, null_cnt)?;
-        let offsets : LeBytes<'a, u16> = read_le_bytes(&mut data, non_null_cnt)?;
-        let values : LeBytes<'a, u8> = LeBytes::new(data);
+        let non_null_ids : LeBytes<'b, u8> = read_le_bytes(&mut data, non_null_cnt)?;
+        let null_ids : LeBytes<'b, u8> = read_le_bytes(&mut data, null_cnt)?;
+        let offsets : LeBytes<'b, u16> = read_le_bytes(&mut data, non_null_cnt)?;
+        let values : LeBytes<'b, u8> = LeBytes::new(data);
 
-        let cols = &self.table_info.cols;
+        let cols = &table_info.cols;
         let mut datum_list = Vec::with_capacity(cols.len());
 
         for col in cols {
@@ -98,7 +96,7 @@ impl <'a> RowData<'a> {
             } else {
                 // This column is missing. It will be filled with default values
                 // later.
-                if self.table_info.pk_is_handle && col.field_type.has_prikey_flag() {
+                if table_info.pk_is_handle && col.field_type.has_prikey_flag() {
                     let datum_ref = DatumRef::parse_from(self.pri_data.as_ref(), col);
                     datum_list.push(datum_ref);
                 } else {
@@ -109,15 +107,15 @@ impl <'a> RowData<'a> {
         return Ok(datum_list);
     }
 
-    fn get_datum_refs_as_big (&'a self, mut data : &'a [u8]) -> Result<Vec<DatumRef<'a, 'a>>> {
+    fn get_datum_refs_as_big <'a, 'b> (&'b self, mut data : &'b [u8], table_info : &'a TableInfo) -> Result<Vec<DatumRef<'b, 'a>>> {
         let non_null_cnt = data.read_u16_le()? as usize;
         let null_cnt = data.read_u16_le()? as usize;
-        let non_null_ids : LeBytes<'a, u32> = read_le_bytes(&mut data, non_null_cnt)?;
-        let null_ids : LeBytes<'a, u32> = read_le_bytes(&mut data, null_cnt)?;
-        let offsets : LeBytes<'a, u32> = read_le_bytes(&mut data, non_null_cnt)?;
-        let values : LeBytes<'a, u8> = LeBytes::new(data);
+        let non_null_ids : LeBytes<'b, u32> = read_le_bytes(&mut data, non_null_cnt)?;
+        let null_ids : LeBytes<'b, u32> = read_le_bytes(&mut data, null_cnt)?;
+        let offsets : LeBytes<'b, u32> = read_le_bytes(&mut data, non_null_cnt)?;
+        let values : LeBytes<'b, u8> = LeBytes::new(data);
 
-        let cols = &self.table_info.cols;
+        let cols = &table_info.cols;
         let mut datum_list = Vec::with_capacity(cols.len());
 
         for col in cols {
@@ -137,7 +135,7 @@ impl <'a> RowData<'a> {
             } else {
                 // This column is missing. It will be filled with default values
                 // later.
-                if self.table_info.pk_is_handle && col.field_type.has_prikey_flag() {
+                if table_info.pk_is_handle && col.field_type.has_prikey_flag() {
                     let datum_ref = DatumRef::parse_from(self.pri_data.as_ref(), col);
                     datum_list.push(datum_ref);
                 } else {
