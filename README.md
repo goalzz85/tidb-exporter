@@ -37,10 +37,10 @@ In addition to the '`-p`' parameter, you have also set '`-d`', which will list a
 
 # Export Data
 
-When Specifying the '`-t`' parameter to export data from a specified table, you should also specify the '-w' parameter to indicate which `Writer` you want to use, although currently, only `csv` is available. Finally, use the '`-e`' to indicate the location to which the `Writer` will write.
+When Specifying the '`-t`' parameter to export data from a specified table, you should also specify the '-e' parameter to indicate which `Exporter` you want to use, although currently, only `csv` is available. Finally, use the '`-w`' to indicate the location to which the `Exporter` will write.
 
 ```bash
-./tidb-exporter -p /data/tikv/db -d user -t user_avatar -w csv -e ~/user.csv
+./tidb-exporter -p /data/tikv/db -d user -t user_avatar -e csv -w ~/user.csv
 ```
 
 tidb-exporter exports all the data that has been stored in RocksDB, which means it will export regions even if they are not leaders in this TiKV node. If you have a cluster with three nodes, it will theoretically export all the data in the database.
