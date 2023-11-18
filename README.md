@@ -1,5 +1,7 @@
 # tidb-exporter
 
+[简体中文](README_zh.md)
+
 TiDB uses RocksDB as default storage engine(in fact, TiKV uses it). `tidb-exporter` can export data from pure RocksDB data files even when TiDB server is not running. This is very useful for exporting data in cases where TiDB is shut down for some reason and recovery is difficult.
 
 **Make sure TiDB or TiKV server is not running before using this tool.**
