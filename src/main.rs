@@ -6,12 +6,27 @@ mod tabledataiterator;
 mod datum;
 mod export;
 
-use std::{sync::Arc, thread};
+use std::{sync::{Arc, RwLock}, thread};
 
+use lazy_static::lazy_static;
 use clap::{Parser, builder::ArgPredicate};
 use export::{exporter::TiDBExporter, CsvExporter};
 
+
 use crate::{storagenode::RocksDbStorageNode, tidbtypes::TableInfo};
+
+lazy_static! {
+    static ref IS_DEBUG_MODE: RwLock<bool> = RwLock::new(false);
+}
+
+fn set_debug_mode(value: bool) {
+    let mut write = IS_DEBUG_MODE.write().unwrap();
+    *write = value;
+}
+
+fn is_debug_mode() -> bool {
+    *IS_DEBUG_MODE.read().unwrap()
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,6 +61,10 @@ struct Cli {
     ///number of threads for concurrent exporting.
     #[arg(short = 'n', long, default_value_t = 3)]
     thread_num : usize,
+
+    ///number of threads for concurrent exporting.
+    #[arg(long, default_value_t = false)]
+    debug : bool
 }
 
 fn main() {
@@ -57,6 +76,7 @@ fn main() {
         print_databases(&rocksdb_node);
         return;
     }
+    set_debug_mode(cli.debug);
 
     let dbs = match rocksdb_node.get_databases() {
         Ok(d) => d,

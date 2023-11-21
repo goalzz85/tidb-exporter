@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use crate::{errors::Error, tidbtypes::{DBInfo, TableInfo}, tabledataiterator::TableDataIterator};
+use crate::{errors::Error, tidbtypes::{DBInfo, TableInfo}, tabledataiterator::TableDataIterator, is_debug_mode};
 use std::collections::HashMap;
 use rocksdb::{DB, Options, DBIterator, BlockBasedOptions};
 use txn_types::{WriteRef, Key, WriteType};
@@ -104,7 +104,12 @@ impl RocksDbStorageNode {
             }
             let db_info_res : DBInfo = match serde_json::from_slice(write_ref.short_value.unwrap()) {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(_) => {
+                    if is_debug_mode() {
+                        print!("database parse error, original data:\n{}", std::str::from_utf8(write_ref.short_value.unwrap()).unwrap())
+                    };
+                    continue;
+                },
             };
             
             ret.push(db_info_res);
@@ -131,9 +136,15 @@ impl RocksDbStorageNode {
 
         for item_res in iter {
             let v_data = item_res.as_ref().unwrap().1.as_ref();
+            print!("table original data:\n{}\n", std::str::from_utf8(v_data).unwrap());
             let table_info : TableInfo = match serde_json::from_slice(v_data) {
                 Ok(r) => r,
-                Err(_) => return Err(Error::CorruptedData("parse table info error".to_string())),
+                Err(_) => {
+                    if is_debug_mode() {
+                        print!("table original data:\n{}\n", std::str::from_utf8(v_data).unwrap())
+                    }
+                    return Err(Error::CorruptedData("parse table info error".to_string()));
+                },
             };
 
             if table_info.state != crate::tidbtypes::StatePublic {
