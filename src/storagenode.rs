@@ -136,7 +136,6 @@ impl RocksDbStorageNode {
 
         for item_res in iter {
             let v_data = item_res.as_ref().unwrap().1.as_ref();
-            print!("table original data:\n{}\n", std::str::from_utf8(v_data).unwrap());
             let table_info : TableInfo = match serde_json::from_slice(v_data) {
                 Ok(r) => r,
                 Err(_) => {
