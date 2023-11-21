@@ -62,7 +62,7 @@ struct Cli {
     #[arg(short = 'n', long, default_value_t = 3)]
     thread_num : usize,
 
-    ///number of threads for concurrent exporting.
+    ///display debug messages.
     #[arg(long, default_value_t = false)]
     debug : bool
 }
