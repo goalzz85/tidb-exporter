@@ -1,4 +1,4 @@
-use std::{sync::{Mutex, Arc}, cell::RefCell, rc::Rc, io::Write, thread::{JoinHandle, self}};
+use std::{sync::{Mutex, Arc, atomic::AtomicBool}, cell::RefCell, rc::Rc, io::Write, thread::{JoinHandle, self}};
 
 use crossbeam_channel::Receiver;
 use csv::Writer;
@@ -34,23 +34,29 @@ impl CsvExporter {
 
 impl TiDBFileExporter for CsvExporter {}
 impl TiDBExporter for CsvExporter {
-    fn start_export(&mut self, rx : Receiver<Vec<Box<RowData>>>) -> Vec<JoinHandle<()>> {
+    fn start_export(&mut self, rx : Receiver<Vec<Box<RowData>>>, is_panic_ctx : Arc<AtomicBool>) -> Vec<JoinHandle<()>> {
         let mut handlers = Vec::with_capacity(self.thread_num);
         for _ in 0..self.thread_num {
             let fw_arc = self.fw.clone();
             let rx_thread = rx.clone();
             let table_info = self.table_info.clone();
             let is_debug_mode = self.is_debug_mode;
+            let is_panic_thread = is_panic_ctx.clone();
             let handle = thread::spawn(move || {
                 let mut export_writer = Box::new(CsvWriter::new(&fw_arc));
                 for blocks in rx_thread {
+                    if is_panic_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                        //somewhere panic
+                        return;
+                    }
                     for row_data in blocks {
                         if let Err(e) = export_writer.write_row_data(row_data, &table_info) {
                             print!("{}", e.to_string());
                             if is_debug_mode {
                                 errors::display_corrupted_err_data(&e);
                             }
-                            panic!("{:?}", e);
+                            is_panic_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+                            return;
                         }
                     }
                 }

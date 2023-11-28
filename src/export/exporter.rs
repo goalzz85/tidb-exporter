@@ -1,4 +1,4 @@
-use std::thread::JoinHandle;
+use std::{thread::JoinHandle, sync::{Arc, atomic::AtomicBool}};
 
 use crossbeam_channel::Receiver;
 
@@ -7,7 +7,7 @@ use crate::{errors::Error, datum::RowData};
 use super::FileWriteWrap;
 
 pub trait TiDBExporter {
-    fn start_export(&mut self, rx : Receiver<Vec<Box<RowData>>>) -> Vec<JoinHandle<()>>;
+    fn start_export(&mut self, rx : Receiver<Vec<Box<RowData>>>, is_panic_ctx : Arc<AtomicBool>) -> Vec<JoinHandle<()>>;
 
 
     //have to set thread num before start_export

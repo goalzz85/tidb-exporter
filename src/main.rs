@@ -6,7 +6,7 @@ mod tabledataiterator;
 mod datum;
 mod export;
 
-use std::{sync::Arc, thread};
+use std::{sync::{Arc, atomic::AtomicBool}, thread};
 
 use clap::{Parser, builder::ArgPredicate};
 use export::{exporter::TiDBExporter, CsvExporter};
@@ -72,7 +72,10 @@ fn main() {
     let dbs = match rocksdb_node.get_databases() {
         Ok(d) => d,
         Err(e) => {
-            print!("{:?}", e);
+            print!("{}", e.to_string());
+            if cli.debug {
+                errors::display_corrupted_err_data(&e);
+            }
             return;
         }
     };
@@ -95,7 +98,10 @@ fn main() {
     let tables = match rocksdb_node.get_table_info_by_dbid(db_id) {
         Ok(t) => t,
         Err(e) => {
-            print!("{:?}", e);
+            print!("{}", e.to_string());
+            if cli.debug {
+                errors::display_corrupted_err_data(&e);
+            }
             return;
         }
     };
@@ -163,11 +169,13 @@ fn print_tables(rocksdb_node : &RocksDbStorageNode, db_id : i64, is_debug : bool
 
 fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, cli : &Cli) {
     let (tx, rx) = crossbeam_channel::bounded(10);
+    let is_panic = Arc::new(AtomicBool::new(false));
     let transmitter_handler;
     {
         let rd_node = rocksdb_node.clone();
         let table_clone = table_info.clone();
         let is_debug = cli.debug;
+        let is_panic_main = is_panic.clone();
         transmitter_handler = thread::spawn(move || {
             if let Ok(data_iterator) = rd_node.get_table_data_iter(&table_clone) {
                 let rows_block_size : usize = 100;
@@ -179,6 +187,10 @@ fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, 
                         Ok(row_data) => {
                             rows_block.push(row_data);
                             if rows_block.len() == rows_block_size {
+                                if is_panic_main.load(std::sync::atomic::Ordering::SeqCst) {
+                                    //somewhere panic
+                                    return;
+                                }
                                 tx.send( rows_block).unwrap();
                                 rows_block = Vec::with_capacity(rows_block_size);
                             }
@@ -188,6 +200,7 @@ fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, 
                             if is_debug {
                                 errors::display_corrupted_err_data(&e);
                             }
+                            is_panic_main.store(true, std::sync::atomic::Ordering::SeqCst);
                             return;
                         },
                     }
@@ -207,7 +220,8 @@ fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, 
     exporter.set_thread_num(thread_num);
     exporter.set_debug_mode(cli.debug);
 
-    let handlers = exporter.start_export(rx.clone());
+    let handlers = exporter.start_export(rx.clone(), is_panic.clone());
+
 
     _ = transmitter_handler.join();
     for h in handlers {

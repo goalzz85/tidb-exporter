@@ -60,10 +60,6 @@ impl RowData {
             return Err(Error::CorruptedDataBytes("get CODEC_VERSION error in the get_datum_refs method".to_string(), self.val_data.clone()));
         }
 
-        if let Ok(b) = data.read_u8() {
-
-        }
-
         let is_big = match data.read_u8() {
             Ok(b) => b,
             Err(_) => return Err(Error::CorruptedDataBytes("get is_big error in the get_datum_refs method".to_string(), self.val_data.clone())),

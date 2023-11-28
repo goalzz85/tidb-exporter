@@ -90,7 +90,7 @@ impl RocksDbStorageNode {
 
             let user_key = match Key::truncate_ts_for(key_data) {
                 Ok(k) => k,
-                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse ts error.".to_string(), key_data.to_owned().into_boxed_slice())),
+                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse ts error.".to_string(), Box::from(key_data))),
             };
 
             if cur_user_key.eq(user_key) {
@@ -100,7 +100,7 @@ impl RocksDbStorageNode {
             let val_data = item_res.as_ref().unwrap().1.as_ref();
             let write_ref = match WriteRef::parse(val_data) {
                 Ok(r) => r,
-                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse WriteRef error.".to_string(), val_data.to_owned().into_boxed_slice())),
+                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse WriteRef error.".to_string(), Box::from(val_data))),
             };
 
             match write_ref.write_type {
