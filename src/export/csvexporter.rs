@@ -4,7 +4,7 @@ use crossbeam_channel::Receiver;
 use csv::Writer;
 use tidb_query_datatype::FieldTypeTp;
 
-use crate::{errors::Error, datum::{DatumRef, RowData}, tidbtypes::TableInfo};
+use crate::{errors::{Error, self}, datum::{DatumRef, RowData}, tidbtypes::TableInfo};
 
 use super::{FileWriteWrap, buf::LinkedBuffer, LinkedBufferWrapper, exporter::{TiDBFileExporter, TiDBExporter}};
 
@@ -13,6 +13,7 @@ pub struct CsvExporter {
     fw : Arc<Mutex<FileWriteWrap>>,
     table_info : TableInfo,
     thread_num : usize,
+    is_debug_mode : bool,
 }
 
 impl CsvExporter {
@@ -23,6 +24,7 @@ impl CsvExporter {
                     table_info,
                     fw : Arc::new(Mutex::new(fw)),
                     thread_num : 3,
+                    is_debug_mode : false,
                 }
             },
             Err(e) => panic!("{}", e.to_string()),
@@ -38,11 +40,18 @@ impl TiDBExporter for CsvExporter {
             let fw_arc = self.fw.clone();
             let rx_thread = rx.clone();
             let table_info = self.table_info.clone();
+            let is_debug_mode = self.is_debug_mode;
             let handle = thread::spawn(move || {
                 let mut export_writer = Box::new(CsvWriter::new(&fw_arc));
                 for blocks in rx_thread {
                     for row_data in blocks {
-                        export_writer.write_row_data(row_data, &table_info).unwrap();
+                        if let Err(e) = export_writer.write_row_data(row_data, &table_info) {
+                            print!("{}", e.to_string());
+                            if is_debug_mode {
+                                errors::display_corrupted_err_data(&e);
+                            }
+                            panic!("{:?}", e);
+                        }
                     }
                 }
                 _ = export_writer.flush();
@@ -57,6 +66,10 @@ impl TiDBExporter for CsvExporter {
         if num > 0 {
             self.thread_num = num;
         }
+    }
+
+    fn set_debug_mode(&mut self, is_debug : bool) {
+        self.is_debug_mode = is_debug
     }
 }
 
@@ -110,18 +123,12 @@ impl CsvWriter<'_> {
     }
 
     fn write_row_data(&mut self, row_data : Box<RowData>, table_info : &TableInfo) -> Result<(), Error> {
-        let datums_res = row_data.get_datum_refs(table_info);
-        if datums_res.is_err() {
-            //print!("{}", datums_res.err().unwrap());
-            return Err(Error::CorruptedData("row data to datum_refs error".to_owned()));
-        }
-
-        let datum_refs = datums_res.unwrap();
+        let datum_refs = row_data.get_datum_refs(table_info)?;
 
         let mut data_record = csv::StringRecord::with_capacity(1024, datum_refs.len());
 
         for d in datum_refs {
-            let mut field_str = &d.to_string();
+            let mut field_str = &d.try_to_string()?;
             if d.is_null() {
                 data_record.push_field("\\N");
                 continue;

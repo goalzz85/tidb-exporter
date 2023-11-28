@@ -12,6 +12,8 @@ pub trait TiDBExporter {
 
     //have to set thread num before start_export
     fn set_thread_num(&mut self, num : usize);
+
+    fn set_debug_mode(&mut self, is_debug : bool);
 }
 
 pub trait TiDBFileExporter {

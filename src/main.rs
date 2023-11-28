@@ -6,27 +6,13 @@ mod tabledataiterator;
 mod datum;
 mod export;
 
-use std::{sync::{Arc, RwLock}, thread};
+use std::{sync::Arc, thread};
 
-use lazy_static::lazy_static;
 use clap::{Parser, builder::ArgPredicate};
 use export::{exporter::TiDBExporter, CsvExporter};
 
 
 use crate::{storagenode::RocksDbStorageNode, tidbtypes::TableInfo};
-
-lazy_static! {
-    static ref IS_DEBUG_MODE: RwLock<bool> = RwLock::new(false);
-}
-
-fn set_debug_mode(value: bool) {
-    let mut write = IS_DEBUG_MODE.write().unwrap();
-    *write = value;
-}
-
-fn is_debug_mode() -> bool {
-    *IS_DEBUG_MODE.read().unwrap()
-}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -69,14 +55,19 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    let rocksdb_node = RocksDbStorageNode::new(&cli.path);
+    let rocksdb_node = match RocksDbStorageNode::new(&cli.path) {
+        Ok(n) => n,
+        Err(e) => {
+            print!("{:?}", e);
+            return;
+        },
+    };
 
 
     if cli.database.is_none() {
-        print_databases(&rocksdb_node);
+        print_databases(&rocksdb_node, cli.debug);
         return;
     }
-    set_debug_mode(cli.debug);
 
     let dbs = match rocksdb_node.get_databases() {
         Ok(d) => d,
@@ -90,13 +81,13 @@ fn main() {
     let db_info_opt = dbs.iter().find(|&d| d.db_name.L.eq(database_name));
     if db_info_opt.is_none() {
         print!("not fount database: {}\n", database_name);
-        print_databases(&rocksdb_node);
+        print_databases(&rocksdb_node, cli.debug);
         return;
     }
 
 
     if cli.table.is_none() {
-        print_tables(&rocksdb_node, db_info_opt.unwrap().id);
+        print_tables(&rocksdb_node, db_info_opt.unwrap().id, cli.debug);
         return;
     }
 
@@ -113,7 +104,7 @@ fn main() {
     let table_info_opt = tables.iter().find(|&t| t.name.L.eq(table_name));
     if table_info_opt.is_none() {
         print!("not fount table: {}\n", table_name);
-        print_tables(&rocksdb_node, db_id);
+        print_tables(&rocksdb_node, db_id, cli.debug);
         return;
     }
 
@@ -134,18 +125,39 @@ fn main() {
 }
 
 
-fn print_databases(rocksdb_node : &RocksDbStorageNode) {
-    let db_info_vec = rocksdb_node.get_databases().unwrap();
-    for db_info in db_info_vec {
-        print!("{}, {}\n", db_info.id, db_info.db_name.L);
-    }
+fn print_databases(rocksdb_node : &RocksDbStorageNode, is_debug : bool) {
+    match rocksdb_node.get_databases() {
+        Ok(db_info_vec) => {
+            for db_info in db_info_vec {
+                print!("{}, {}\n", db_info.id, db_info.db_name.L);
+            }
+        },
+        Err(e) => {
+            print!("{}", e.to_string());
+            if is_debug {
+                errors::display_corrupted_err_data(&e);
+            }
+            return;
+        },
+    };
 }
 
-fn print_tables(rocksdb_node : &RocksDbStorageNode, db_id : i64) {
-    let table_info_vec = rocksdb_node.get_table_info_by_dbid(db_id).unwrap();
-    for table_info in table_info_vec {
-        print!("{}, {}\n", table_info.id, table_info.name.L);
-    }
+fn print_tables(rocksdb_node : &RocksDbStorageNode, db_id : i64, is_debug : bool) {
+    match rocksdb_node.get_table_info_by_dbid(db_id) {
+        Ok(table_info_vec) => {
+            for table_info in table_info_vec {
+                print!("{}, {}\n", table_info.id, table_info.name.L);
+            }
+        }
+        Err(e) => {
+            print!("{}", e.to_string());
+            if is_debug {
+                errors::display_corrupted_err_data(&e);
+            }
+            return;
+        },
+    };
+    
 }
 
 
@@ -155,17 +167,29 @@ fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, 
     {
         let rd_node = rocksdb_node.clone();
         let table_clone = table_info.clone();
+        let is_debug = cli.debug;
         transmitter_handler = thread::spawn(move || {
             if let Ok(data_iterator) = rd_node.get_table_data_iter(&table_clone) {
                 let rows_block_size : usize = 100;
 
                 let mut rows_block = Vec::with_capacity(rows_block_size);
 
-                for row_data in data_iterator {
-                    rows_block.push(row_data);
-                    if rows_block.len() == rows_block_size {
-                        tx.send( rows_block).unwrap();
-                        rows_block = Vec::with_capacity(rows_block_size);
+                for row_data_res in data_iterator {
+                    match row_data_res {
+                        Ok(row_data) => {
+                            rows_block.push(row_data);
+                            if rows_block.len() == rows_block_size {
+                                tx.send( rows_block).unwrap();
+                                rows_block = Vec::with_capacity(rows_block_size);
+                            }
+                        },
+                        Err(e) => {
+                            print!("{}", e.to_string());
+                            if is_debug {
+                                errors::display_corrupted_err_data(&e);
+                            }
+                            return;
+                        },
                     }
                 }
                 if !rows_block.is_empty() {
@@ -181,6 +205,7 @@ fn export_data(rocksdb_node : Arc<RocksDbStorageNode>, table_info : &TableInfo, 
     let thread_num = cli.thread_num;
     let mut exporter = get_export_writer_by_cli(cli, table_info);
     exporter.set_thread_num(thread_num);
+    exporter.set_debug_mode(cli.debug);
 
     let handlers = exporter.start_export(rx.clone());
 
