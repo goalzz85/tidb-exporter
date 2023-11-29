@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "tidb-exporter"
-version = "7.1.0"
+version = "7.1.1"
 dependencies = [
  "chrono",
  "clap 4.1.14",
