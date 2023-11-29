@@ -8,7 +8,7 @@ pub struct RocksDbStorageNode {
 }
 
 impl RocksDbStorageNode {
-    pub fn new(db_path : &str) -> RocksDbStorageNode {
+    pub fn new(db_path : &str) -> Result<Self, Error> {
         let db_path_buf = PathBuf::from(db_path); 
         let mut opts = Options::default();
         opts.set_advise_random_on_open(false);
@@ -20,13 +20,16 @@ impl RocksDbStorageNode {
         opts.set_block_based_table_factory(&bopts);
         
         let cfs = ["default", "raft", "write", "lock"];
-        let db = DB::open_cf_for_read_only(&opts, &db_path_buf, cfs.into_iter(), false).unwrap();
+        let db = match DB::open_cf_for_read_only(&opts, &db_path_buf, cfs.into_iter(), false) {
+            Ok(db) => db,
+            Err(e) => return Err(Error::StorageNodeError(e.into_string())),
+        };
         
         //XXX handle the errors
 
-        RocksDbStorageNode{
+        Ok(RocksDbStorageNode{
             db: db
-        }
+        })
     }
 
     pub fn get_table_data_iter<'a, 'b>(&'b self, table_info : &'a TableInfo) -> Result<TableDataIterator<'a, 'b>, Error> {
@@ -79,18 +82,25 @@ impl RocksDbStorageNode {
         let mut cur_user_key : Vec<u8> = vec![];
 
         for item_res in iter {
-            let user_key = match Key::truncate_ts_for(item_res.as_ref().unwrap().0.as_ref()) {
+            if let Err(e) = item_res {
+                return Err(Error::StorageNodeError(e.into_string()));
+            }
+
+            let key_data = item_res.as_ref().unwrap().0.as_ref();
+
+            let user_key = match Key::truncate_ts_for(key_data) {
                 Ok(k) => k,
-                Err(e) => return Err(Error::CorruptedData(e.to_string())),
+                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse ts error.".to_string(), Box::from(key_data))),
             };
 
             if cur_user_key.eq(user_key) {
                 continue;
             }
 
-            let write_ref = match WriteRef::parse(item_res.as_ref().unwrap().1.as_ref()) {
+            let val_data = item_res.as_ref().unwrap().1.as_ref();
+            let write_ref = match WriteRef::parse(val_data) {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(_) => return Err(Error::CorruptedDataBytes("get databases parse WriteRef error.".to_string(), Box::from(val_data))),
             };
 
             match write_ref.write_type {
@@ -104,7 +114,9 @@ impl RocksDbStorageNode {
             }
             let db_info_res : DBInfo = match serde_json::from_slice(write_ref.short_value.unwrap()) {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(_) => {
+                    return Err(Error::CorruptedDataString("get databases parse JSON str error.".to_string(), std::str::from_utf8(write_ref.short_value.unwrap()).unwrap().to_string()));
+                },
             };
             
             ret.push(db_info_res);
@@ -130,10 +142,21 @@ impl RocksDbStorageNode {
         let mut table_id_deleted_time_hash : HashMap<i64, i64> = HashMap::new();
 
         for item_res in iter {
+            if let Err(e) = item_res {
+                return Err(Error::StorageNodeError(e.into_string()));
+            }
+
             let v_data = item_res.as_ref().unwrap().1.as_ref();
             let table_info : TableInfo = match serde_json::from_slice(v_data) {
                 Ok(r) => r,
-                Err(_) => return Err(Error::CorruptedData("parse table info error".to_string())),
+                Err(_) => {
+                    return Err(
+                        Error::CorruptedDataString(
+                            "get table info parse JSON str error.".to_string(),
+                            std::str::from_utf8(v_data).unwrap().to_string()
+                        )
+                    );
+                },
             };
 
             if table_info.state != crate::tidbtypes::StatePublic {

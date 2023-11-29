@@ -1,7 +1,7 @@
 use rocksdb::DBIterator;
-use tidb_query_datatype::codec::{Result, Error, table::decode_int_handle};
+use tidb_query_datatype::codec::table::decode_int_handle;
 
-use crate::tidbtypes::TableInfo;
+use crate::{tidbtypes::TableInfo, errors::Error};
 use crate::datum::RowData;
 use txn_types::{WriteRef, WriteType, TimeStamp};
 
@@ -35,9 +35,9 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
         };
     }
 
-    fn get_inner_row_data_from_default(&mut self) -> Option<Result<Box<RowData>>> {
-        if self.next_data_cf_default_buf.is_some() {
-            return Some(Result::Ok(self.next_data_cf_default_buf.take().unwrap()));
+    fn get_inner_row_data_from_default(&mut self) -> Option<Result<Box<RowData>, Error>> {
+        if let Some(row_data) = self.next_data_cf_default_buf.take() {
+            return Some(Result::Ok(row_data));
         }
 
         if self.table_data_cf_default_returned_eof {
@@ -53,21 +53,27 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
                         Err(e) => Result::Err(Error::CorruptedData(e.to_string())),
                         Ok((key_data, val_data)) => {
                             let mut key_data_ref = &key_data[1..];
-                            let key_decoded_data = tikv_util::codec::bytes::decode_bytes(&mut key_data_ref, false).unwrap();
-                            Ok(Box::new(
-                                RowData::new(key_decoded_data.into_boxed_slice(), val_data, self.table_info)
-                            ))
+                            match tikv_util::codec::bytes::decode_bytes(&mut key_data_ref, false) {
+                                Ok(key_decoded_data) => {
+                                    match RowData::new(key_decoded_data.into_boxed_slice(), val_data, self.table_info) {
+                                        Ok(row_data) => Ok(Box::new(row_data)),
+                                        Err(e) => Err(e),
+                                    }
+                                },
+                                Err(_) => {
+                                    Err(Error::CorruptedDataBytes("key data decode error.".to_string(), key_data))
+                                },
+                            }
                         }
-                    }
+                    }//end of match res
                 })
-            };
+            };//return match self.table_data_cf_default_iter.next()
         }
     }
 
-    fn get_inner_write_data_from_write(&mut self) -> Option<Result<(Box<[u8]>,Box<[u8]>)>> {
-        if self.next_data_cf_write_buf.is_some() {
-            let buf_opt = self.next_data_cf_write_buf.take();
-            return Some(Ok(buf_opt.unwrap()));
+    fn get_inner_write_data_from_write(&mut self) -> Option<Result<(Box<[u8]>,Box<[u8]>), Error>> {
+        if let Some(data_pair) = self.next_data_cf_write_buf.take() {
+            return Some(Ok(data_pair));
         }
 
         if self.table_data_cf_write_returned_eof {
@@ -75,8 +81,7 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
         }
 
         //get data from iter
-        let d_opt = self.table_data_cf_write_iter.next();
-        match d_opt {
+        match self.table_data_cf_write_iter.next() {
             None => {
                 self.table_data_cf_write_returned_eof = true;
                 return None;
@@ -84,8 +89,11 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
             Some(res) => match res {
                 Ok((raw_key_data, val_data)) => {
                     let mut key_data_ref = &raw_key_data[1..];
-                    let key_decoded_data = tikv_util::codec::bytes::decode_bytes(&mut key_data_ref, false).unwrap();   
-                    return Some(Ok((key_decoded_data.into_boxed_slice(), val_data)))
+                    if let Ok(key_decoded_data) = tikv_util::codec::bytes::decode_bytes(&mut key_data_ref, false) {
+                        return Some(Ok((key_decoded_data.into_boxed_slice(), val_data)));
+                    } else {
+                        return Some(Err(Error::CorruptedDataBytes("key data decode error.".to_string(), raw_key_data)));
+                    }
                 },
                 Err(e) => return Some(Err(Error::CorruptedData(e.into_string()))),
             }
@@ -93,7 +101,7 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
     }
 
 
-    fn get_inner_row_data(&mut self) -> Option<Result<Box<RowData>>> {
+    fn get_inner_row_data(&mut self) -> Option<Result<Box<RowData>, Error>> {
         let mut cur_handle_id : i64 = 0;
         let mut cur_row_data : Option<Box<RowData>> = None;
         let mut max_delete_ts : TimeStamp = TimeStamp::zero();
@@ -146,7 +154,11 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
                 }
 
                 let (key_data, val_data) = write_data_res.ok().unwrap();
-                let handle_int = decode_int_handle(key_data.as_ref()).unwrap();
+                
+                let handle_int = match decode_int_handle(key_data.as_ref()) {
+                    Ok(handle_int) => handle_int,
+                    Err(_) => return Some(Err(Error::CorruptedDataBytes("decode handle int from key data error.".to_string(), key_data))),
+                };
 
                 if handle_int < cur_handle_id {
                     //move newer data to next buffer, to operate later.
@@ -165,7 +177,10 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
                 }
 
                 //do something
-                let wref = WriteRef::parse(val_data.as_ref()).unwrap();
+                let wref = match WriteRef::parse(val_data.as_ref()) {
+                    Ok(wref) => wref,
+                    Err(_) => return Some(Err(Error::CorruptedDataBytes("parse WriteRef error.".to_string(), val_data))),
+                };
                 if wref.write_type == WriteType::Delete {
                     let append_ts = wref.start_ts;
                     if append_ts > max_delete_ts {
@@ -177,7 +192,10 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
                     }
                     
                     let row_data = Box::new(
-                        RowData::new(key_data, Box::<[u8]>::from(wref.short_value.unwrap()), self.table_info));
+                        match RowData::new(key_data, Box::<[u8]>::from(wref.short_value.unwrap()), self.table_info){
+                            Ok(row_data) => row_data,
+                            Err(e) => return Some(Err(e)),
+                        });
                     if cur_row_data.is_none() || row_data.append_ts > cur_row_data.as_ref().unwrap().append_ts {
                         cur_handle_id = row_data.handle_int;
                         cur_row_data = Some(row_data);
@@ -210,17 +228,12 @@ impl <'a, 'b> TableDataIterator<'a, 'b> {
 }
 
 impl <'a, 'b> Iterator for TableDataIterator<'a,'b> {
-    type Item = Box<RowData>;
+    type Item = Result<Box<RowData>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.get_inner_row_data() {
             None => None,
-            Some(res) => {
-                match res {
-                    Err(..) => None,
-                    Ok(row_data) => Some(row_data),
-                }
-            },
+            Some(res) => Some(res),
         }
     }
 }
