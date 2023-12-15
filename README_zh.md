@@ -2,7 +2,7 @@
 
 TiDB使用RocksDB作为底层存储引擎（实际上是TiKV在使用）。`tidb-exporter`可以直接从RocksDB数据文件中直接导出TiDB数据，甚至是在TiDB无法正常工作情况下。这是很救命的，特别是在TiDB挂了，又启动不起来的时候。
 
-**使用的时候一定要确保TiDB或TiKV服务没有工作的时候**
+**使用的时候一定要确保TiDB或TiKV服务没有工作的时候，只支持v5.x以上版本。**
 
 ![tidb-exporter](assets/tidb-exporter.png)
 
